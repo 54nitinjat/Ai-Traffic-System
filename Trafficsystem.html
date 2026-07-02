@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traffic Eye — AI Signal Detection</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+    <style>
+        :root{--bg-primary:#0a0e17;--bg-secondary:#111827;--bg-card:#1a2234;--accent-green:#00e676;--accent-red:#ff1744;--accent-amber:#ffab00;--accent-cyan:#00e5ff;--text-primary:#e8eaf6;--text-muted:#7986cb;--border-color:#2a3550}
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{background:var(--bg-primary);color:var(--text-primary);font-family:'Inter',sans-serif;min-height:100vh;overflow-x:hidden}
+        .font-orbitron{font-family:'Orbitron',monospace}
+        body::before{content:'';position:fixed;inset:0;background:linear-gradient(rgba(0,229,255,0.02) 1px,transparent 1px),linear-gradient(90deg,rgba(0,229,255,0.02) 1px,transparent 1px);background-size:50px 50px;pointer-events:none;z-index:0}
+        .glow-green{text-shadow:0 0 20px rgba(0,230,118,0.5)}.glow-red{text-shadow:0 0 20px rgba(255,23,68,0.5)}.glow-amber{text-shadow:0 0 20px rgba(255,171,0,0.5)}.glow-cyan{text-shadow:0 0 20px rgba(0,229,255,0.5)}
+        .card{background:var(--bg-card);border:1px solid var(--border-color);border-radius:12px;position:relative;overflow:hidden}
+        .card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--accent-cyan),transparent);opacity:0.6}
+        .stat-card{transition:all 0.3s ease}.stat-card:hover{transform:translateY(-4px);box-shadow:0 8px 32px rgba(0,229,255,0.15)}
+        .pulse-dot{width:10px;height:10px;border-radius:50%;animation:pulse 1.5s infinite}
+        @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.5;transform:scale(1.3)}}
+        @keyframes slideIn{from{opacity:0;transform:translateX(-20px)}to{opacity:1;transform:translateX(0)}}
+        .violation-entry{animation:slideIn 0.4s ease}
+        .scrollbar-thin::-webkit-scrollbar{width:4px}.scrollbar-thin::-webkit-scrollbar-track{background:var(--bg-secondary)}.scrollbar-thin::-webkit-scrollbar-thumb{background:var(--border-color);border-radius:4px}
+        .badge{font-size:10px;padding:2px 8px;border-radius:9999px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px}
+        @keyframes flash{0%,100%{opacity:1}50%{opacity:0.3}}.flash-alert{animation:flash 0.5s ease 3}
+        .speed-bar{height:4px;border-radius:2px;background:linear-gradient(90deg,var(--accent-green),var(--accent-amber),var(--accent-red));transition:width 0.5s ease}
+        .mode-tab{padding:8px 16px;border-radius:8px 8px 0 0;font-size:12px;font-weight:600;cursor:pointer;transition:all 0.3s;border:1px solid transparent;border-bottom:none;background:transparent;color:var(--text-muted)}
+        .mode-tab:hover{color:var(--text-primary);background:rgba(255,255,255,0.05)}
+        .mode-tab.active{background:var(--bg-card);color:var(--accent-cyan);border-color:var(--border-color)}
+        .signal-badge{font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;letter-spacing:0.5px}
+        @keyframes scanline{0%{top:-2px}100%{top:100%}}
+        .scanline{position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgba(0,229,255,0.3),transparent);animation:scanline 3s linear infinite;pointer-events:none}
+        @keyframes breathe{0%,100%{opacity:0.6}50%{opacity:1}}.breathe{animation:breathe 2s ease infinite}
+        .credit-bar{background:linear-gradient(90deg,transparent,rgba(0,229,255,0.08),transparent);border-top:1px solid var(--border-color)}
+        @keyframes glowPulse{0%,100%{text-shadow:0 0 8px rgba(0,229,255,0.4)}50%{text-shadow:0 0 20px rgba(0,229,255,0.8)}}
+        .credit-glow{animation:glowPulse 3s ease infinite}
+    </style>
+</head>
+<body class="relative">
+    <header class="relative z-10 border-b border-[--border-color] bg-[--bg-secondary]/80 backdrop-blur-md">
+        <div class="max-w-[1600px] mx-auto px-4 py-3 flex items-center justify-between flex-wrap gap-2">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-[--accent-cyan] to-[--accent-green] flex items-center justify-center">
+                    <i class="fa-solid fa-traffic-light text-[--bg-primary] text-lg"></i>
+                </div>
+                <div>
+                    <h1 class="font-orbitron text-lg font-bold tracking-wider">TRAFFIC EYE</h1>
+                    <p class="text-[10px] text-[--text-muted] tracking-widest uppercase">AI Signal Detection & Violation System</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2"><div class="pulse-dot bg-[--accent-green]"></div><span class="text-xs text-[--accent-green] font-semibold">LIVE</span></div>
+                <div class="text-right">
+                    <div id="currentTime" class="font-orbitron text-sm text-[--accent-cyan]"></div>
+                    <div id="currentDate" class="text-[10px] text-[--text-muted]"></div>
+                </div>
+                <button id="resetBtn" class="px-4 py-2 bg-[--accent-red]/20 text-[--accent-red] border border-[--accent-red]/40 rounded-lg text-xs font-semibold hover:bg-[--accent-red]/30 transition-all">
+                    <i class="fa-solid fa-rotate-right mr-1"></i>RESET
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="relative z-10 max-w-[1600px] mx-auto p-4">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+            <div class="card stat-card p-4">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs text-[--text-muted] font-semibold uppercase tracking-wider">Total Vehicles</span>
+                    <div class="w-8 h-8 rounded-lg bg-[--accent-cyan]/15 flex items-center justify-center"><i class="fa-solid fa-car text-[--accent-cyan] text-sm"></i></div>
+                </div>
+                <div id="totalVehicles" class="font-orbitron text-3xl font-bold glow-cyan text-[--accent-cyan]">0</div>
+                <div class="flex items-center gap-1 mt-1"><i class="fa-solid fa-arrow-up text-[--accent-green] text-[10px]"></i><span id="vehicleRate" class="text-[10px] text-[--accent-green]">0/min</span></div>
+            </div>
+            <div class="card stat-card p-4">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs text-[--text-muted] font-semibold uppercase tracking-wider">Red Light Violations</span>
+                    <div class="w-8 h-8 rounded-lg bg-[--accent-red]/15 flex items-center justify-center"><i class="fa-solid fa-ban text-[--accent-red] text-sm"></i></div>
+                </div>
+                <div id="redLightViolations" class="font-orbitron text-3xl font-bold glow-red text-[--accent-red]">0</div>
+                <div class="flex items-center gap-1 mt-1"><i class="fa-solid fa-triangle-exclamation text-[--accent-amber] text-[10px]"></i><span id="violationRate" class="text-[10px] text-[--accent-amber]">0/min</span></div>
+            </div>
+            <div class="card stat-card p-4">
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs text-[--text-muted] font-semibold uppercase tracking-wider">Signal Status</span>
+                    <div id="sigBadge" class="signal-badge bg-[--accent-cyan]/20 text-[--accent-cyan]">AUTO CYCLE</div>
+                </div>
+                <div id="signalStatus" class="font-orbitron text-xl font-bold text-[--accent-green] glow-green">GREEN</div>
+                <div id="signalTimer" class="text-[10px] text-[--text-muted] mt-1">Changes in 5s</div>
+                <div id="signalConfidence" class="hidden text-[10px] text-[--text-muted] mt-0.5">
+                    <i class="fa-solid fa-brain mr-1"></i>Color confidence: <span id="sigConfVal">0%</span>
+                </div>
+            </div>
+            <div class="card stat-card p-4">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs text-[--text-muted] font-semibold uppercase tracking-wider">Detection Confidence</span>
+                    <div class="w-8 h-8 rounded-lg bg-[--accent-green]/15 flex items-center justify-center"><i class="fa-solid fa-bullseye text-[--accent-green] text-sm"></i></div>
+                </div>
+                <div id="avgConfidence" class="font-orbitron text-3xl font-bold glow-green text-[--accent-green]">0%</div>
+                <div class="mt-2 w-full h-1 bg-[--bg-primary] rounded-full overflow-hidden"><div id="confidenceBar" class="h-full bg-[--accent-green] rounded-full transition-all duration-500" style="width:0%"></div></div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div class="lg:col-span-2 flex flex-col gap-4">
+                <div class="card p-0 overflow-visible">
+                    <div class="flex border-b border-[--border-color]">
+                        <button class="mode-tab active" data-mode="simulation" onclick="switchMode('simulation')"><i class="fa-solid fa-gamepad mr-1"></i>Simulation</button>
+                        <button class="mode-tab" data-mode="camera" onclick="switchMode('camera')"><i class="fa-solid fa-video mr-1"></i>Live Camera</button>
+                        <button class="mode-tab" data-mode="video" onclick="switchMode('video')"><i class="fa-solid fa-film mr-1"></i>Upload Video</button>
+                    </div>
+                    <div class="p-4">
+                        <div id="camControls" class="hidden mb-3 flex items-center gap-3 flex-wrap">
+                            <button id="startCamBtn" onclick="startCamera()" class="px-4 py-2 bg-[--accent-cyan]/20 text-[--accent-cyan] border border-[--accent-cyan]/40 rounded-lg text-xs font-semibold hover:bg-[--accent-cyan]/30 transition-all"><i class="fa-solid fa-camera mr-1"></i>Start Camera</button>
+                            <button id="stopCamBtn" onclick="stopCamera()" class="hidden px-4 py-2 bg-[--accent-red]/20 text-[--accent-red] border border-[--accent-red]/40 rounded-lg text-xs font-semibold hover:bg-[--accent-red]/30 transition-all"><i class="fa-solid fa-stop mr-1"></i>Stop</button>
+                            <span class="text-[10px] text-[--text-muted] ml-auto"><i class="fa-solid fa-circle-info mr-1"></i>Signal is auto-detected from video. Double-click to manually mark traffic light.</span>
+                        </div>
+                        <div id="videoControls" class="hidden mb-3 flex items-center gap-3 flex-wrap">
+                            <input type="file" id="videoFileInput" accept="video/*" class="hidden" onchange="handleVideoUpload(event)">
+                            <button onclick="document.getElementById('videoFileInput').click()" class="px-4 py-2 bg-[--accent-amber]/20 text-[--accent-amber] border border-[--accent-amber]/40 rounded-lg text-xs font-semibold hover:bg-[--accent-amber]/30 transition-all"><i class="fa-solid fa-upload mr-1"></i>Choose Video</button>
+                            <span id="videoFileName" class="text-xs text-[--text-muted]">No file selected</span>
+                            <span class="text-[10px] text-[--text-muted] ml-auto"><i class="fa-solid fa-circle-info mr-1"></i>Double-click on traffic light to mark it for color detection.</span>
+                        </div>
+                        <div id="simInfo" class="mb-3 flex items-center justify-between">
+                            <div class="flex items-center gap-2"><i class="fa-solid fa-circle-info text-[--accent-cyan] text-xs"></i><span class="text-[10px] text-[--text-muted]">Auto simulation — signal auto-cycles, vehicles spawn and get detected automatically</span></div>
+                            <span id="fpsCounter" class="text-[10px] text-[--text-muted] font-mono">-- FPS</span>
+                        </div>
+                        <div class="relative bg-black rounded-lg overflow-hidden" id="canvasContainer">
+                            <canvas id="mainCanvas" width="800" height="400" style="width:100%;display:block;border-radius:8px"></canvas>
+                            <div class="scanline"></div>
+                            <div class="absolute top-3 left-3 bg-black/70 backdrop-blur-sm rounded-lg px-3 py-2 border border-[--accent-cyan]/30">
+                                <div class="text-[10px] text-[--text-muted]">DETECTIONS</div>
+                                <div id="detectionCount" class="font-orbitron text-sm text-[--accent-cyan]">0 objects</div>
+                            </div>
+                            <div class="absolute top-3 right-3 bg-black/70 backdrop-blur-sm rounded-lg px-3 py-2 border border-[--accent-red]/30">
+                                <div class="text-[10px] text-[--text-muted]">VIOLATIONS</div>
+                                <div id="alertCount" class="font-orbitron text-sm text-[--accent-red]">0 active</div>
+                            </div>
+                            <div id="canvasSignalBox" class="hidden absolute bottom-3 right-3 bg-black/70 backdrop-blur-sm rounded-lg px-3 py-2 border border-[--accent-amber]/30">
+                                <div class="text-[10px] text-[--accent-amber]"><i class="fa-solid fa-traffic-light mr-1"></i>Signal: <span id="canvasSigText" class="font-orbitron">--</span></div>
+                                <div class="text-[9px] text-[--text-muted]" id="canvasSigMethod">--</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="card p-4">
+                        <div class="flex items-center gap-2 mb-3"><i class="fa-solid fa-chart-pie text-[--accent-amber]"></i><span class="font-semibold text-sm">Vehicle Distribution</span></div>
+                        <div class="flex items-center justify-center" style="height:200px"><canvas id="vehicleTypeChart"></canvas></div>
+                    </div>
+                    <div class="card p-4">
+                        <div class="flex items-center gap-2 mb-3"><i class="fa-solid fa-chart-line text-[--accent-green]"></i><span class="font-semibold text-sm">Detection Timeline</span></div>
+                        <div style="height:200px"><canvas id="timelineChart"></canvas></div>
+                    </div>
+                </div>
+            </div>
+            <div class="flex flex-col gap-4">
+                <div class="card p-4">
+                    <div class="flex items-center gap-2 mb-3"><i class="fa-solid fa-brain text-[--accent-amber]"></i><span class="font-semibold text-sm">Signal AI Analysis</span></div>
+                    <div class="text-center py-4">
+                        <div id="sigBigLight" class="w-16 h-16 rounded-full mx-auto mb-3 bg-[#003311] border-2 border-[#333] transition-all duration-500"></div>
+                        <div id="sigBigLabel" class="font-orbitron text-lg text-[--accent-green]">GREEN</div>
+                        <div id="sigMethodLabel" class="text-[10px] text-[--text-muted] mt-1">Auto Cycle (Simulation)</div>
+                    </div>
+                    <div class="space-y-2 mt-3 pt-3 border-t border-[--border-color]">
+                        <div class="flex justify-between text-xs"><span class="text-[--text-muted]">Traffic Light Found</span><span id="tlFound" class="font-orbitron text-[--accent-green]">N/A</span></div>
+                        <div class="flex justify-between text-xs"><span class="text-[--text-muted]">Color Confidence</span><span id="tlColorConf" class="font-orbitron text-[--accent-cyan]">N/A</span></div>
+                        <div class="flex justify-between text-xs"><span class="text-[--text-muted]">Detection Method</span><span id="tlMethod" class="font-orbitron text-[--accent-amber]">Simulation</span></div>
+                    </div>
+                </div>
+                <div class="card p-4">
+                    <div class="flex items-center gap-2 mb-3"><i class="fa-solid fa-gauge-high text-[--accent-amber]"></i><span class="font-semibold text-sm">Speed Analysis</span></div>
+                    <div class="space-y-3">
+                        <div><div class="flex justify-between text-xs mb-1"><span class="text-[--text-muted]">Avg Speed</span><span id="avgSpeed" class="text-[--accent-cyan] font-orbitron">0 km/h</span></div><div class="w-full h-1 bg-[--bg-primary] rounded-full"><div id="avgSpeedBar" class="speed-bar" style="width:0%"></div></div></div>
+                        <div><div class="flex justify-between text-xs mb-1"><span class="text-[--text-muted]">Max Speed</span><span id="maxSpeed" class="text-[--accent-red] font-orbitron">0 km/h</span></div><div class="w-full h-1 bg-[--bg-primary] rounded-full"><div id="maxSpeedBar" class="speed-bar" style="width:0%"></div></div></div>
+                        <div><div class="flex justify-between text-xs mb-1"><span class="text-[--text-muted]">Min Speed</span><span id="minSpeed" class="text-[--accent-green] font-orbitron">0 km/h</span></div><div class="w-full h-1 bg-[--bg-primary] rounded-full"><div id="minSpeedBar" class="speed-bar" style="width:0%"></div></div></div>
+                        <div class="pt-2 border-t border-[--border-color]"><div class="flex justify-between text-xs"><span class="text-[--text-muted]">Speed Limit</span><span class="text-[--accent-amber] font-orbitron">60 km/h</span></div></div>
+                    </div>
+                </div>
+                <div class="card p-4">
+                    <div class="flex items-center gap-2 mb-3"><i class="fa-solid fa-list-ol text-[--accent-cyan]"></i><span class="font-semibold text-sm">Category Breakdown</span></div>
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between p-2 rounded-lg bg-[--bg-primary]/50"><div class="flex items-center gap-2"><i class="fa-solid fa-car text-[--accent-cyan] text-xs"></i><span class="text-xs">Car</span></div><span id="countCar" class="font-orbitron text-sm text-[--accent-cyan]">0</span></div>
+                        <div class="flex items-center justify-between p-2 rounded-lg bg-[--bg-primary]/50"><div class="flex items-center gap-2"><i class="fa-solid fa-motorcycle text-[--accent-green] text-xs"></i><span class="text-xs">Bike / Cycle</span></div><span id="countBike" class="font-orbitron text-sm text-[--accent-green]">0</span></div>
+                        <div class="flex items-center justify-between p-2 rounded-lg bg-[--bg-primary]/50"><div class="flex items-center gap-2"><i class="fa-solid fa-truck text-[--accent-amber] text-xs"></i><span class="text-xs">Truck</span></div><span id="countTruck" class="font-orbitron text-sm text-[--accent-amber]">0</span></div>
+                        <div class="flex items-center justify-between p-2 rounded-lg bg-[--bg-primary]/50"><div class="flex items-center gap-2"><i class="fa-solid fa-bus text-[--accent-red] text-xs"></i><span class="text-xs">Bus</span></div><span id="countBus" class="font-orbitron text-sm text-[--accent-red]">0</span></div>
+                    </div>
+                </div>
+                <div class="card p-4 flex-1 flex flex-col" style="max-height:300px">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center gap-2"><i class="fa-solid fa-triangle-exclamation text-[--accent-red]"></i><span class="font-semibold text-sm">Violation Log</span></div>
+                        <span id="logCount" class="badge bg-[--accent-red]/20 text-[--accent-red]">0 entries</span>
+                    </div>
+                    <div id="violationLog" class="flex-1 overflow-y-auto scrollbar-thin space-y-2">
+                        <div class="text-center text-[--text-muted] text-xs py-8"><i class="fa-solid fa-shield-halved text-2xl mb-2 block opacity-30"></i>Violations will appear here...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Credit Footer -->
+    <footer class="credit-bar relative z-10 mt-4 py-4 text-center">
+        <span class="font-orbitron text-sm text-[--accent-cyan] credit-glow tracking-widest">Made by Nitin Kumar</span>
+    </footer>
+
+    <video id="hiddenVideo" style="display:none" playsinline></video>
+    <div id="toastContainer" class="fixed top-20 right-4 z-50 flex flex-col gap-2"></div>
+
+    <script>
+    const S={
+        totalVehicles:0,redLightViolations:0,signalState:'GREEN',
+        avgConfidence:0,speeds:[],violationLog:[],
+        counts:{Car:0,Bike:0,Truck:0,Bus:0},
+        startTime:Date.now(),currentMode:'simulation',
+        modelLoaded:false,model:null,cameraStream:null,
+        detectionLineY:0.65,isDetecting:false,
+        signalMethod:'simulation',
+        trafficLightBBox:null,manualSignalRegion:null,
+        signalColorConfidence:0,signalNotFoundFrames:0
+    };
+
+    const canvas=document.getElementById('mainCanvas');
+    const ctx=canvas.getContext('2d');
+    const hiddenVideo=document.getElementById('hiddenVideo');
+
+    function switchMode(mode){
+        stopCamera();
+        hiddenVideo.pause();hiddenVideo.srcObject=null;hiddenVideo.src='';
+        S.isDetecting=false;S.currentMode=mode;
+        S.trafficLightBBox=null;S.manualSignalRegion=null;
+        S.signalNotFoundFrames=0;S.signalColorConfidence=0;
+        document.querySelectorAll('.mode-tab').forEach(t=>t.classList.toggle('active',t.dataset.mode===mode));
+        document.getElementById('camControls').classList.toggle('hidden',mode!=='camera');
+        document.getElementById('videoControls').classList.toggle('hidden',mode!=='video');
+        document.getElementById('simInfo').classList.toggle('hidden',mode!=='simulation');
+        document.getElementById('canvasSignalBox').classList.toggle('hidden',mode==='simulation');
+        document.getElementById('startCamBtn').classList.remove('hidden');
+        document.getElementById('stopCamBtn').classList.add('hidden');
+        if(mode==='simulation'){S.signalState='GREEN';S.signalMethod='simulation';signalStartTime=Date.now();}
+        else{S.signalState='GREEN';S.signalMethod='not_found';}
+        updateSignalUI();
+        showToast('Mode: '+mode.charAt(0).toUpperCase()+mode.slice(1),'cyan');
+    }
+
+    // Analyze RGB pixels inside a traffic light region
+    function analyzeTrafficLightColor(bbox){
+        const[bx,by,bw,bh]=bbox;
+        const mx=0.15;
+        const ax=Math.round(bx+bw*mx),ay=Math.round(by+bh*mx);
+        const aw=Math.round(bw*(1-2*mx)),ah=Math.round(bh*(1-2*mx));
+        const cx=Math.max(0,Math.min(ax,canvas.width-1));
+        const cy=Math.max(0,Math.min(ay,canvas.height-1));
+        const cw=Math.max(1,Math.min(aw,canvas.width-cx));
+        const ch=Math.max(1,Math.min(ah,canvas.height-cy));
+        let imageData;
+        try{imageData=ctx.getImageData(cx,cy,cw,ch);}catch(e){return null;}
+        const data=imageData.data;
+        let redCount=0,yellowCount=0,greenCount=0;
+        const stripH=Math.floor(ch/3);
+        for(let row=0;row<ch;row++){
+            for(let col=0;col<cw;col++){
+                const idx=(row*cw+col)*4;
+                const r=data[idx],g=data[idx+1],b=data[idx+2];
+                const brightness=r+g+b;
+                if(brightness<120)continue;
+                if(r>230&&g>230&&b>230)continue;
+                const isRed=r>130&&g<100&&b<100;
+                const isGreen=g>120&&r<100&&b<110;
+                const isYellow=r>140&&g>100&&b<70;
+                if(isRed){redCount++;if(row<stripH)redCount+=1;}
+                if(isGreen){greenCount++;if(row>=stripH*2)greenCount+=1;}
+                if(isYellow){yellowCount++;if(row>=stripH&&row<stripH*2)yellowCount+=1;}
+            }
+        }
+        const maxCount=Math.max(redCount,yellowCount,greenCount);
+        if(maxCount<4)return{color:null,confidence:0};
+        const total=redCount+yellowCount+greenCount;
+        const confidence=Math.round((maxCount/total)*100);
+        let color;
+        if(redCount>=yellowCount&&redCount>=greenCount)color='RED';
+        else if(yellowCount>=redCount&&yellowCount>=greenCount)color='YELLOW';
+        else color='GREEN';
+        return{color,confidence};
+    }
+
+    const SIGNAL_TIMINGS={RED:5000,YELLOW:2000,GREEN:5000};
+    let signalStartTime=Date.now();
+
+    function updateSimSignal(){
+        if(S.currentMode!=='simulation')return;
+        const elapsed=Date.now()-signalStartTime;
+        const duration=SIGNAL_TIMINGS[S.signalState];
+        const remaining=Math.max(0,Math.ceil((duration-elapsed)/1000));
+        if(elapsed>=duration){
+            S.signalState=S.signalState==='RED'?'GREEN':S.signalState==='GREEN'?'YELLOW':'RED';
+            signalStartTime=Date.now();
+        }
+        document.getElementById('signalTimer').textContent='Changes in '+remaining+'s';
+    }
+
+    function updateSignalUI(){
+        const st=S.signalState;
+        const el=document.getElementById('signalStatus');
+        el.textContent=st;
+        el.className='font-orbitron text-xl font-bold '+(st==='RED'?'text-[--accent-red] glow-red':st==='YELLOW'?'text-[--accent-amber] glow-amber':'text-[--accent-green] glow-green');
+        const badge=document.getElementById('sigBadge');
+        if(S.signalMethod==='simulation'){
+            badge.textContent='AUTO CYCLE';badge.className='signal-badge bg-[--accent-cyan]/20 text-[--accent-cyan]';
+            document.getElementById('signalTimer').textContent='Changes in '+Math.max(0,Math.ceil((SIGNAL_TIMINGS[S.signalState]-(Date.now()-signalStartTime))/1000))+'s';
+            document.getElementById('signalConfidence').classList.add('hidden');
+        }else if(S.signalMethod==='ai_detected'){
+            badge.textContent='AI DETECTED';badge.className='signal-badge bg-[--accent-green]/20 text-[--accent-green] breathe';
+            document.getElementById('signalTimer').textContent='Identified from video';
+            document.getElementById('signalConfidence').classList.remove('hidden');
+            document.getElementById('sigConfVal').textContent=S.signalColorConfidence+'%';
+        }else if(S.signalMethod==='manual_mark'){
+            badge.textContent='MARKED';badge.className='signal-badge bg-[--accent-amber]/20 text-[--accent-amber]';
+            document.getElementById('signalTimer').textContent='Manually marked by user';
+            document.getElementById('signalConfidence').classList.remove('hidden');
+            document.getElementById('sigConfVal').textContent=S.signalColorConfidence+'%';
+        }else{
+            badge.textContent='NOT VISIBLE';badge.className='signal-badge bg-[--accent-red]/20 text-[--accent-red]';
+            document.getElementById('signalTimer').textContent='Traffic light not found';
+            document.getElementById('signalConfidence').classList.add('hidden');
+        }
+        if(S.currentMode!=='simulation'){
+            document.getElementById('canvasSignalBox').classList.remove('hidden');
+            document.getElementById('canvasSigText').textContent=st;
+            document.getElementById('canvasSigText').style.color=st==='RED'?'var(--accent-red)':st==='YELLOW'?'var(--accent-amber)':'var(--accent-green)';
+            document.getElementById('canvasSigMethod').textContent=S.signalMethod==='ai_detected'?'AI Detected':S.signalMethod==='manual_mark'?'Manual Mark':'Not Visible';
+        }
+        const bigLight=document.getElementById('sigBigLight');
+        const colors={RED:['#ff1744','0 0 25px #ff1744, 0 0 50px #ff1744'],YELLOW:['#ffab00','0 0 25px #ffab00, 0 0 50px #ffab00'],GREEN:['#00e676','0 0 25px #00e676, 0 0 50px #00e676']};
+        const[bg,shadow]=colors[st]||colors.GREEN;
+        bigLight.style.background=bg;bigLight.style.boxShadow=shadow;
+        document.getElementById('sigBigLabel').textContent=st;
+        document.getElementById('sigBigLabel').style.color=st==='RED'?'var(--accent-red)':st==='YELLOW'?'var(--accent-amber)':'var(--accent-green)';
+        const methods={simulation:'Auto Cycle (Simulation)',ai_detected:'AI Color Detection (Video)',manual_mark:'Manual Mark (User)',not_found:'Traffic Light Not Found'};
+        document.getElementById('sigMethodLabel').textContent=methods[S.signalMethod]||'--';
+        document.getElementById('tlFound').textContent=S.signalMethod==='not_found'?'No':S.signalMethod==='simulation'?'N/A':'Yes';
+        document.getElementById('tlFound').style.color=S.signalMethod==='not_found'?'var(--accent-red)':'var(--accent-green)';
+        document.getElementById('tlColorConf').textContent=S.signalMethod==='simulation'?'N/A':S.signalColorConfidence+'%';
+        document.getElementById('tlMethod').textContent=S.signalMethod==='simulation'?'Simulation':S.signalMethod==='ai_detected'?'COCO-SSD + Pixel':S.signalMethod==='manual_mark'?'Manual Mark':'--';
+    }
+
+    async function startCamera(){
+        try{
+            const stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:640},height:{ideal:480},facingMode:'environment'}});
+            S.cameraStream=stream;hiddenVideo.srcObject=stream;hiddenVideo.play();
+            hiddenVideo.onloadedmetadata=()=>{canvas.width=hiddenVideo.videoWidth;canvas.height=hiddenVideo.videoHeight;S.detectionLineY=0.65;};
+            document.getElementById('startCamBtn').classList.add('hidden');
+            document.getElementById('stopCamBtn').classList.remove('hidden');
+            if(!S.modelLoaded){S.model=await cocoSsd.load({base:'lite_mobilenet_v2'});S.modelLoaded=true;}
+            S.isDetecting=true;
+            showToast('Camera started — signal auto-detected from video!','green');
+        }catch(err){showToast('Camera error: '+err.message,'red');}
+    }
+    function stopCamera(){
+        if(S.cameraStream){S.cameraStream.getTracks().forEach(t=>t.stop());S.cameraStream=null;}
+        S.isDetecting=false;
+        document.getElementById('startCamBtn').classList.remove('hidden');
+        document.getElementById('stopCamBtn').classList.add('hidden');
+    }
+
+    function handleVideoUpload(event){
+        const file=event.target.files[0];if(!file)return;
+        document.getElementById('videoFileName').textContent=file.name;
+        hiddenVideo.src=URL.createObjectURL(file);hiddenVideo.play();
+        hiddenVideo.onloadedmetadata=()=>{canvas.width=hiddenVideo.videoWidth;canvas.height=hiddenVideo.videoHeight;S.detectionLineY=0.65;};
+        hiddenVideo.onended=()=>{hiddenVideo.currentTime=0;hiddenVideo.play();};
+        (async()=>{
+            if(!S.modelLoaded){S.model=await cocoSsd.load({base:'lite_mobilenet_v2'});S.modelLoaded=true;}
+            S.isDetecting=true;
+            showToast('Video loaded — signal auto-detected from video!','green');
+        })();
+    }
+
+    canvas.addEventListener('click',(e)=>{
+        if(S.currentMode==='simulation')return;
+        const rect=canvas.getBoundingClientRect();
+        S.detectionLineY=(e.clientY-rect.top)*(canvas.height/rect.height)/canvas.height;
+    });
+    canvas.addEventListener('dblclick',(e)=>{
+        if(S.currentMode==='simulation')return;e.preventDefault();
+        const rect=canvas.getBoundingClientRect();
+        const x=(e.clientX-rect.left)*(canvas.width/rect.width);
+        const y=(e.clientY-rect.top)*(canvas.height/rect.height);
+        S.manualSignalRegion=[x-25,y-50,50,100];
+        showToast('Traffic light region marked! Color analysis started.','green');
+    });
+
+    class VehicleTracker{
+        constructor(){this.tracks=[];this.nextId=1;}
+        update(detections,lineY){
+            const dets=detections.map(d=>({cx:d.bbox[0]+d.bbox[2]/2,cy:d.bbox[1]+d.bbox[3]/2,bbox:d.bbox,cls:d.class,score:d.score}));
+            const matched=new Set();const crossed=[];
+            for(const track of this.tracks){
+                let bestD=Infinity,bestI=-1;
+                for(let i=0;i<dets.length;i++){if(matched.has(i))continue;const d=Math.hypot(track.cx-dets[i].cx,track.cy-dets[i].cy);if(d<bestD&&d<120){bestD=d;bestI=i;}}
+                if(bestI>=0){matched.add(bestI);const prevCy=track.cy;Object.assign(track,{cx:dets[bestI].cx,cy:dets[bestI].cy,bbox:dets[bestI].bbox,cls:dets[bestI].cls,score:dets[bestI].score,missed:0});if(!track.counted&&((prevCy<lineY&&track.cy>=lineY)||(prevCy>lineY&&track.cy<=lineY))){track.counted=true;crossed.push(track);}}
+                else track.missed++;
+            }
+            for(let i=0;i<dets.length;i++){if(!matched.has(i))this.tracks.push({id:this.nextId++,cx:dets[i].cx,cy:dets[i].cy,bbox:dets[i].bbox,cls:dets[i].cls,score:dets[i].score,missed:0,counted:false});}
+            this.tracks=this.tracks.filter(t=>t.missed<15);return crossed;
+        }
+    }
+    const tracker=new VehicleTracker();
+    function mapClass(c){return c==='car'?'Car':c==='truck'?'Truck':c==='bus'?'Bus':c==='motorcycle'||c==='bicycle'?'Bike':'Car';}
+
+    let detectFrameCount=0;
+
+    async function processCameraVideoFrame(){
+        if(!S.isDetecting||!S.model||hiddenVideo.readyState<2)return;
+        ctx.drawImage(hiddenVideo,0,0,canvas.width,canvas.height);
+        const lineY=Math.round(S.detectionLineY*canvas.height);
+        const dlAlpha=0.5+Math.sin(Date.now()/400)*0.3;
+        ctx.save();ctx.strokeStyle=`rgba(0,229,255,${dlAlpha})`;ctx.lineWidth=2;ctx.setLineDash([10,6]);
+        ctx.beginPath();ctx.moveTo(0,lineY);ctx.lineTo(canvas.width,lineY);ctx.stroke();ctx.setLineDash([]);
+        ctx.font='12px Orbitron';ctx.fillStyle=`rgba(0,229,255,${dlAlpha+0.3})`;ctx.fillText('DETECTION LINE',10,lineY-8);ctx.restore();
+
+        detectFrameCount++;
+        if(detectFrameCount%4===0){
+            try{
+                const predictions=await S.model.detect(hiddenVideo);
+                const vehicleClasses=['car','truck','bus','motorcycle','bicycle'];
+                const vehicles=predictions.filter(p=>vehicleClasses.includes(p.class));
+                const trafficLights=predictions.filter(p=>p.class==='traffic light');
+                const crossed=tracker.update(vehicles,lineY);
+                for(const v of crossed){
+                    S.totalVehicles++;const cat=mapClass(v.cls);S.counts[cat]++;
+                    const spd=20+Math.round(Math.random()*50);S.speeds.push(spd);
+                    if(S.signalState==='RED'){S.redLightViolations++;addViolationLog(cat,spd,v.score);showToast(cat+' crossed the red light!','red');}
+                }
+                if(trafficLights.length>0){
+                    const tl=trafficLights.reduce((a,b)=>a.score>b.score?a:b);
+                    S.trafficLightBBox=tl.bbox;
+                    const result=analyzeTrafficLightColor(tl.bbox);
+                    if(result&&result.color){S.signalState=result.color;S.signalColorConfidence=result.confidence;S.signalMethod='ai_detected';S.signalNotFoundFrames=0;}
+                }else if(S.manualSignalRegion){
+                    const result=analyzeTrafficLightColor(S.manualSignalRegion);
+                    if(result&&result.color){S.signalState=result.color;S.signalColorConfidence=result.confidence;S.signalMethod='manual_mark';S.signalNotFoundFrames=0;}
+                }else{S.signalNotFoundFrames++;if(S.signalNotFoundFrames>30)S.signalMethod='not_found';}
+            }catch(e){console.error('Detection error:',e);}
+        }
+
+        for(const track of tracker.tracks){
+            if(track.missed>5)continue;
+            const[bx,by,bw,bh]=track.bbox;const cat=mapClass(track.cls);
+            const boxColor=track.counted&&S.signalState==='RED'?'rgba(255,23,68,':'rgba(0,229,255,';
+            ctx.save();ctx.strokeStyle=boxColor+'0.9)';ctx.lineWidth=2;ctx.beginPath();ctx.rect(bx,by,bw,bh);ctx.stroke();
+            const cl=10;ctx.strokeStyle=boxColor+'1)';ctx.lineWidth=3;
+            ctx.beginPath();ctx.moveTo(bx,by+cl);ctx.lineTo(bx,by);ctx.lineTo(bx+cl,by);ctx.stroke();
+            ctx.beginPath();ctx.moveTo(bx+bw-cl,by);ctx.lineTo(bx+bw,by);ctx.lineTo(bx+bw,by+cl);ctx.stroke();
+            ctx.beginPath();ctx.moveTo(bx,by+bh-cl);ctx.lineTo(bx,by+bh);ctx.lineTo(bx+cl,by+bh);ctx.stroke();
+            ctx.beginPath();ctx.moveTo(bx+bw-cl,by+bh);ctx.lineTo(bx+bw,by+bh);ctx.lineTo(bx+bw,by+bh-cl);ctx.stroke();
+            const label=cat+' '+(track.score*100).toFixed(0)+'%';
+            ctx.font='11px Orbitron';const tw=ctx.measureText(label).width;
+            ctx.fillStyle=boxColor+'0.85)';ctx.fillRect(bx,by-18,tw+10,16);ctx.fillStyle='#fff';ctx.fillText(label,bx+5,by-5);
+            ctx.font='9px monospace';ctx.fillStyle='rgba(255,255,255,0.4)';ctx.fillText('ID:'+track.id,bx,by+bh+12);ctx.restore();
+        }
+
+        const tlBox=S.trafficLightBBox||S.manualSignalRegion;
+        if(tlBox&&(S.signalMethod==='ai_detected'||S.signalMethod==='manual_mark')){
+            const[tx,ty,tw,th]=tlBox;ctx.save();
+            ctx.strokeStyle='rgba(255,171,0,0.9)';ctx.lineWidth=2;ctx.setLineDash([6,4]);
+            ctx.beginPath();ctx.rect(tx-4,ty-4,tw+8,th+8);ctx.stroke();ctx.setLineDash([]);
+            const sigLabel='SIGNAL: '+S.signalState+' ('+S.signalColorConfidence+'%)';
+            ctx.font='bold 11px Orbitron';const slw=ctx.measureText(sigLabel).width;
+            const sigColor=S.signalState==='RED'?'rgba(255,23,68,':'rgba(0,230,118,';
+            ctx.fillStyle=sigColor+'0.85)';ctx.fillRect(tx-4,ty-24,slw+10,18);ctx.fillStyle='#fff';ctx.fillText(sigLabel,tx+1,ty-10);
+            ctx.restore();
+        }
+
+        ctx.font='10px monospace';ctx.fillStyle='rgba(255,255,255,0.5)';
+        ctx.fillText(S.currentMode.toUpperCase()+' | '+new Date().toLocaleTimeString(),10,canvas.height-10);
+        if(Math.floor(Date.now()/700)%2===0){ctx.fillStyle='#ff1744';ctx.beginPath();ctx.arc(canvas.width-20,canvas.height-14,5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fff';ctx.font='10px Orbitron';ctx.fillText('REC',canvas.width-50,canvas.height-10);}
+    }
+
+    // Simulation vehicles
+    const VTYPES=['Car','Bike','Truck','Bus'];
+    const VCOLS={Car:['#e53935','#1e88e5','#43a047','#fb8c00','#8e24aa','#00acc1','#f5f5f5','#424242'],Bike:['#ff6f00','#e65100','#37474f'],Truck:['#ff8f00','#5d4037','#455a64','#d84315'],Bus:['#1565c0','#c62828','#2e7d32','#f9a825']};
+    const VSZ={Car:{w:50,h:28},Bike:{w:30,h:16},Truck:{w:70,h:32},Bus:{w:75,h:34}};
+    const STOP_X=350;
+
+    class SimVeh{
+        constructor(){
+            this.type=VTYPES[Math.floor(Math.random()*VTYPES.length)];
+            const c=VCOLS[this.type];this.color=c[Math.floor(Math.random()*c.length)];
+            const s=VSZ[this.type];this.w=s.w+Math.random()*10-5;this.h=s.h+Math.random()*6-3;
+            this.lane=Math.floor(Math.random()*3);this.laneY=120+this.lane*75;
+            this.x=820+Math.random()*100;this.y=this.laneY-this.h/2;
+            this.speed=1.5+Math.random()*3;this.speedKmh=Math.round(this.speed*15+Math.random()*20);
+            this.detected=false;this.counted=false;this.violationChecked=false;
+            this.confidence=0.82+Math.random()*0.17;this.detectionAlpha=0;
+            this.isViolator=false;this.stopped=false;
+            this.willViolate=S.signalState==='RED'?Math.random()<0.15:false;
+        }
+        update(){
+            if((S.signalState==='RED'||S.signalState==='YELLOW')&&!this.counted){if(this.x-this.w/2<=STOP_X&&this.x+this.w/2>=STOP_X-60){if(!this.willViolate&&!this.stopped)this.stopped=true;}}
+            if(S.signalState==='GREEN'&&this.stopped)this.stopped=false;
+            if(!this.stopped)this.x-=this.speed;
+            if(Math.abs(this.x-STOP_X)<80){this.detected=true;this.detectionAlpha=Math.min(1,this.detectionAlpha+0.1);}
+            if(this.x<STOP_X&&!this.counted){this.counted=true;S.totalVehicles++;S.counts[this.type]++;S.speeds.push(this.speedKmh);}
+            if(!this.violationChecked&&this.x<STOP_X-5&&S.signalState==='RED'){this.violationChecked=true;if(this.willViolate){this.isViolator=true;S.redLightViolations++;addViolationLog(this.type,this.speedKmh,this.confidence);showToast(this.type+' crossed the red light!','red');}}
+            if(this.x<STOP_X-150)this.detectionAlpha=Math.max(0,this.detectionAlpha-0.03);
+        }
+        draw(ctx){
+            ctx.save();const x=this.x-this.w/2,y=this.y;
+            ctx.fillStyle='rgba(0,0,0,0.3)';ctx.beginPath();ctx.roundRect(x+3,y+3,this.w,this.h,4);ctx.fill();
+            ctx.fillStyle=this.color;ctx.beginPath();ctx.roundRect(x,y,this.w,this.h,4);ctx.fill();
+            if(this.type==='Car'){ctx.fillStyle='rgba(100,200,255,0.4)';ctx.fillRect(x+this.w*0.55,y+3,this.w*0.2,this.h-6);}
+            else if(this.type==='Truck'){ctx.fillStyle='rgba(100,200,255,0.3)';ctx.fillRect(x+this.w*0.7,y+3,this.w*0.15,this.h-6);}
+            else if(this.type==='Bus'){ctx.fillStyle='rgba(100,200,255,0.3)';for(let i=0;i<4;i++)ctx.fillRect(x+8+i*16,y+3,10,this.h-6);}
+            ctx.fillStyle=this.x>STOP_X?'#ffee58':'#ef5350';ctx.beginPath();ctx.arc(x,y+this.h/2,3,0,Math.PI*2);ctx.fill();
+            if(this.isViolator&&this.x>-50){ctx.strokeStyle='rgba(255,23,68,0.9)';ctx.lineWidth=2;ctx.setLineDash([4,4]);ctx.beginPath();ctx.roundRect(x-4,y-4,this.w+8,this.h+8,6);ctx.stroke();ctx.setLineDash([]);}
+            if(this.detectionAlpha>0&&this.detected){
+                ctx.globalAlpha=this.detectionAlpha*0.9;const bc=this.isViolator?'rgba(255,23,68,':'rgba(0,229,255,';
+                ctx.strokeStyle=bc+'0.8)';ctx.lineWidth=1.5;ctx.beginPath();ctx.roundRect(x-6,y-6,this.w+12,this.h+12,4);ctx.stroke();
+                const cl=8;ctx.strokeStyle=bc+'1)';ctx.lineWidth=2.5;
+                ctx.beginPath();ctx.moveTo(x-6,y-6+cl);ctx.lineTo(x-6,y-6);ctx.lineTo(x-6+cl,y-6);ctx.stroke();
+                ctx.beginPath();ctx.moveTo(x+this.w+6-cl,y-6);ctx.lineTo(x+this.w+6,y-6);ctx.lineTo(x+this.w+6,y-6+cl);ctx.stroke();
+                const label=this.type+' '+(this.confidence*100).toFixed(0)+'%';
+                ctx.font='10px Orbitron';const tw=ctx.measureText(label).width;
+                ctx.fillStyle=bc+'0.85)';ctx.fillRect(x-6,y-20,tw+8,14);ctx.fillStyle='#fff';ctx.fillText(label,x-2,y-9);
+                const sl=this.speedKmh+' km/h';ctx.fillStyle=bc+'0.7)';const sw=ctx.measureText(sl).width;
+                ctx.fillRect(x-6,y+this.h+8,sw+8,14);ctx.fillStyle='#fff';ctx.font='9px Orbitron';ctx.fillText(sl,x-2,y+this.h+18);
+                ctx.globalAlpha=1;
+            }
+            ctx.restore();
+        }
+        offScreen(){return this.x<-100;}
+    }
+
+    let simVehs=[],lastSpawn=0;
+
+    function drawSimScene(){
+        canvas.width=800;canvas.height=400;const W=800,H=400;
+        const bg=ctx.createLinearGradient(0,0,0,H);bg.addColorStop(0,'#0d1117');bg.addColorStop(0.3,'#161b22');bg.addColorStop(1,'#1a1f2e');
+        ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+        ctx.fillStyle='#2d333b';ctx.fillRect(0,80,W,240);
+        ctx.strokeStyle='rgba(255,255,255,0.6)';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(0,82);ctx.lineTo(W,82);ctx.stroke();ctx.beginPath();ctx.moveTo(0,318);ctx.lineTo(W,318);ctx.stroke();
+        ctx.strokeStyle='rgba(255,255,255,0.35)';ctx.lineWidth=1.5;ctx.setLineDash([20,15]);ctx.beginPath();ctx.moveTo(0,155);ctx.lineTo(W,155);ctx.stroke();ctx.beginPath();ctx.moveTo(0,235);ctx.lineTo(W,235);ctx.stroke();ctx.setLineDash([]);
+        ctx.strokeStyle='rgba(255,255,255,0.9)';ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(STOP_X,82);ctx.lineTo(STOP_X,318);ctx.stroke();
+        ctx.fillStyle='rgba(255,255,255,0.5)';for(let i=0;i<6;i++)ctx.fillRect(STOP_X+8+i*14,82,8,236);
+        const dlA=0.3+Math.sin(Date.now()/500)*0.2;ctx.strokeStyle=`rgba(0,229,255,${dlA})`;ctx.lineWidth=1.5;ctx.setLineDash([6,4]);ctx.beginPath();ctx.moveTo(STOP_X,80);ctx.lineTo(STOP_X,320);ctx.stroke();ctx.setLineDash([]);
+        ctx.font='9px Orbitron';ctx.fillStyle=`rgba(0,229,255,${dlA+0.3})`;ctx.fillText('DETECTION LINE',STOP_X-45,76);
+        ctx.fillStyle='#4a5568';ctx.fillRect(STOP_X+100,20,6,65);ctx.fillStyle='#1a1a2e';ctx.strokeStyle='#333';ctx.lineWidth=2;ctx.beginPath();ctx.roundRect(STOP_X+88,8,30,60,6);ctx.fill();ctx.stroke();
+        const sX=STOP_X+103;
+        [{c:'RED',y:22,col:'#ff1744',off:'#331111'},{c:'YELLOW',y:38,col:'#ffab00',off:'#332200'},{c:'GREEN',y:54,col:'#00e676',off:'#003311'}].forEach(l=>{
+            ctx.beginPath();ctx.arc(sX,l.y,7,0,Math.PI*2);ctx.fillStyle=S.signalState===l.c?l.col:l.off;ctx.fill();
+            if(S.signalState===l.c){ctx.shadowColor=l.col;ctx.shadowBlur=15;ctx.fill();ctx.shadowBlur=0;}
+        });
+        ctx.fillStyle='#151a23';
+        for(let i=0;i<8;i++){const bx=i*110+10,bh=30+Math.sin(i*2.3)*20;ctx.fillRect(bx,80-bh,80,bh);ctx.fillStyle='rgba(255,200,50,0.15)';for(let wy=80-bh+5;wy<76;wy+=10)for(let wx=bx+5;wx<bx+75;wx+=15)if(Math.random()>0.3)ctx.fillRect(wx,wy,8,6);ctx.fillStyle='#151a23';}
+        ctx.fillStyle='#1c2128';ctx.fillRect(0,0,W,80);ctx.fillRect(0,320,W,80);
+        ctx.font='10px monospace';ctx.fillStyle='rgba(255,255,255,0.5)';ctx.fillText('SIM | '+new Date().toLocaleTimeString(),10,H-10);
+        if(Math.floor(Date.now()/700)%2===0){ctx.fillStyle='#ff1744';ctx.beginPath();ctx.arc(W-20,H-14,5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fff';ctx.font='10px Orbitron';ctx.fillText('SIM',W-50,H-10);}
+    }
+
+    function addViolationLog(type,speed,confidence){
+        const t=new Date().toLocaleTimeString();
+        S.violationLog.unshift({time:t,type,speed,confidence:(confidence*100).toFixed(0)});
+        if(S.violationLog.length>50)S.violationLog.pop();renderViolationLog();
+    }
+    function renderViolationLog(){
+        const c=document.getElementById('violationLog');
+        document.getElementById('logCount').textContent=S.violationLog.length+' entries';
+        if(!S.violationLog.length){c.innerHTML='<div class="text-center text-[--text-muted] text-xs py-8"><i class="fa-solid fa-shield-halved text-2xl mb-2 block opacity-30"></i>Violations will appear here...</div>';return;}
+        c.innerHTML=S.violationLog.map((v,i)=>`
+            <div class="violation-entry p-2 rounded-lg bg-[--accent-red]/8 border border-[--accent-red]/20 ${i===0?'flash-alert':''}">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2"><i class="fa-solid fa-circle-xmark text-[--accent-red] text-xs"></i><span class="text-xs font-semibold">${v.type}</span><span class="badge bg-[--accent-red]/20 text-[--accent-red]">${v.speed} km/h</span></div>
+                    <span class="text-[10px] text-[--text-muted] font-mono">${v.time}</span>
+                </div>
+                <div class="text-[10px] text-[--text-muted] mt-1 ml-5">Red light crossed | Confidence: ${v.confidence}%</div>
+            </div>`).join('');
+    }
+
+    function showToast(msg,type='cyan'){
+        const c=document.getElementById('toastContainer');const t=document.createElement('div');
+        const colors={red:'border-[--accent-red] bg-[--accent-red]/15 text-[--accent-red]',cyan:'border-[--accent-cyan] bg-[--accent-cyan]/15 text-[--accent-cyan]',green:'border-[--accent-green] bg-[--accent-green]/15 text-[--accent-green]'};
+        t.className=`px-4 py-3 rounded-lg border ${colors[type]} backdrop-blur-md text-xs font-semibold shadow-lg`;
+        t.style.animation='slideIn 0.3s ease';t.innerHTML=`<i class="fa-solid fa-bell mr-2"></i>${msg}`;
+        c.appendChild(t);setTimeout(()=>{t.style.opacity='0';t.style.transition='opacity 0.3s';setTimeout(()=>t.remove(),300);},2500);
+    }
+
+    function updateDashboard(){
+        document.getElementById('totalVehicles').textContent=S.totalVehicles;
+        document.getElementById('redLightViolations').textContent=S.redLightViolations;
+        const em=Math.max(1,(Date.now()-S.startTime)/60000);
+        document.getElementById('vehicleRate').textContent=Math.round(S.totalVehicles/em)+'/min';
+        document.getElementById('violationRate').textContent=Math.round(S.redLightViolations/em)+'/min';
+        let ad=0;if(S.currentMode==='simulation')ad=simVehs.filter(v=>v.detected).length;else ad=tracker.tracks.filter(t=>t.missed<5).length;
+        document.getElementById('detectionCount').textContent=ad+' objects';
+        document.getElementById('alertCount').textContent=(S.currentMode==='simulation'?simVehs.filter(v=>v.isViolator&&v.x>-50).length:0)+' active';
+        document.getElementById('countCar').textContent=S.counts.Car;
+        document.getElementById('countBike').textContent=S.counts.Bike;
+        document.getElementById('countTruck').textContent=S.counts.Truck;
+        document.getElementById('countBus').textContent=S.counts.Bus;
+        if(S.currentMode==='simulation'){const dv=simVehs.filter(v=>v.detected);if(dv.length)S.avgConfidence=dv.reduce((s,v)=>s+v.confidence,0)/dv.length;}
+        else if(tracker.tracks.length)S.avgConfidence=tracker.tracks.reduce((s,t)=>s+t.score,0)/tracker.tracks.length;
+        const cp=(S.avgConfidence*100).toFixed(1);document.getElementById('avgConfidence').textContent=cp+'%';document.getElementById('confidenceBar').style.width=cp+'%';
+        if(S.speeds.length){
+            const avg=Math.round(S.speeds.reduce((a,b)=>a+b,0)/S.speeds.length);const mx=Math.max(...S.speeds),mn=Math.min(...S.speeds);
+            document.getElementById('avgSpeed').textContent=avg+' km/h';document.getElementById('maxSpeed').textContent=mx+' km/h';document.getElementById('minSpeed').textContent=mn+' km/h';
+            document.getElementById('avgSpeedBar').style.width=Math.min(100,avg/80*100)+'%';document.getElementById('maxSpeedBar').style.width=Math.min(100,mx/80*100)+'%';document.getElementById('minSpeedBar').style.width=Math.min(100,mn/80*100)+'%';
+        }
+        const now=new Date();document.getElementById('currentTime').textContent=now.toLocaleTimeString();
+        document.getElementById('currentDate').textContent=now.toLocaleDateString('en-US',{weekday:'short',day:'numeric',month:'short'});
+    }
+
+    const pieCtx=document.getElementById('vehicleTypeChart').getContext('2d');
+    const vehicleTypeChart=new Chart(pieCtx,{type:'doughnut',data:{labels:['Car','Bike/Cycle','Truck','Bus'],datasets:[{data:[1,1,1,1],backgroundColor:['#00e5ff','#00e676','#ffab00','#ff1744'],borderColor:'#1a2234',borderWidth:3}]},options:{responsive:true,maintainAspectRatio:false,cutout:'60%',plugins:{legend:{position:'bottom',labels:{color:'#7986cb',font:{size:10},padding:10,usePointStyle:true,pointStyleWidth:8}}}}});
+    const timeCtx=document.getElementById('timelineChart').getContext('2d');
+    const timelineChart=new Chart(timeCtx,{type:'bar',data:{labels:[],datasets:[{label:'Vehicles',data:[],backgroundColor:'rgba(0,229,255,0.6)',borderColor:'#00e5ff',borderWidth:1,borderRadius:3,barPercentage:0.6},{label:'Violations',data:[],backgroundColor:'rgba(255,23,68,0.6)',borderColor:'#ff1744',borderWidth:1,borderRadius:3,barPercentage:0.6}]},options:{responsive:true,maintainAspectRatio:false,scales:{x:{ticks:{color:'#7986cb',font:{size:9}},grid:{color:'rgba(42,53,80,0.5)'}},y:{ticks:{color:'#7986cb',font:{size:9},stepSize:1},grid:{color:'rgba(42,53,80,0.5)'},beginAtZero:true}},plugins:{legend:{labels:{color:'#7986cb',font:{size:10},usePointStyle:true,pointStyleWidth:8}}}}});
+    let chartVL=0,chartVlL=0;
+    setInterval(()=>{
+        const c=S.counts;const t=c.Car+c.Bike+c.Truck+c.Bus;
+        vehicleTypeChart.data.datasets[0].data=t>0?[c.Car,c.Bike,c.Truck,c.Bus]:[1,1,1,1];vehicleTypeChart.update('none');
+        const nv=S.totalVehicles-chartVL,nvl=S.redLightViolations-chartVlL;chartVL=S.totalVehicles;chartVlL=S.redLightViolations;
+        const tl=new Date().toLocaleTimeString([],{minute:'2-digit',second:'2-digit'});
+        timelineChart.data.labels.push(tl);timelineChart.data.datasets[0].data.push(nv);timelineChart.data.datasets[1].data.push(nvl);
+        if(timelineChart.data.labels.length>15){timelineChart.data.labels.shift();timelineChart.data.datasets[0].data.shift();timelineChart.data.datasets[1].data.shift();}
+        timelineChart.update('none');
+    },5000);
+
+    document.getElementById('resetBtn').addEventListener('click',()=>{
+        S.totalVehicles=0;S.redLightViolations=0;S.speeds=[];S.violationLog=[];S.counts={Car:0,Bike:0,Truck:0,Bus:0};S.startTime=Date.now();
+        simVehs=[];tracker.tracks=[];chartVL=0;chartVlL=0;
+        timelineChart.data.labels=[];timelineChart.data.datasets[0].data=[];timelineChart.data.datasets[1].data=[];timelineChart.update('none');
+        renderViolationLog();updateDashboard();showToast('Dashboard reset!','green');
+    });
+
+    let lastFT=performance.now(),fpsVals=[];
+    async function mainLoop(ts){
+        const dt=ts-lastFT;lastFT=ts;fpsVals.push(1000/dt);if(fpsVals.length>30)fpsVals.shift();
+        if(S.currentMode==='simulation')document.getElementById('fpsCounter').textContent=Math.round(fpsVals.reduce((a,b)=>a+b,0)/fpsVals.length)+' FPS';
+        if(S.currentMode==='simulation'){
+            ctx.clearRect(0,0,800,400);drawSimScene();updateSimSignal();
+            const now=Date.now();if(now-lastSpawn>800+Math.random()*600&&simVehs.length<8){simVehs.push(new SimVeh());lastSpawn=now;}
+            simVehs.forEach(v=>{v.update();v.draw(ctx);});simVehs=simVehs.filter(v=>!v.offScreen());
+        }else if(S.currentMode==='camera'||S.currentMode==='video'){
+            if(S.isDetecting&&hiddenVideo.readyState>=2){await processCameraVideoFrame();}
+            else if(!S.isDetecting){
+                ctx.fillStyle='#0d1117';ctx.fillRect(0,0,canvas.width,canvas.height);
+                ctx.fillStyle='#7986cb';ctx.font='14px Inter';ctx.textAlign='center';
+                const msg=S.currentMode==='camera'?'Click "Start Camera" to begin':'Upload a traffic video to begin';
+                ctx.fillText(msg,canvas.width/2,canvas.height/2-10);
+                ctx.font='11px Inter';ctx.fillStyle='#4a5568';ctx.textAlign='center';
+                ctx.fillText('Signal will be auto-detected from video using AI color analysis',canvas.width/2,canvas.height/2+15);
+                ctx.textAlign='left';
+            }
+        }
+        updateSignalUI();updateDashboard();requestAnimationFrame(mainLoop);
+    }
+    requestAnimationFrame(mainLoop);
+    setTimeout(()=>showToast('Traffic Eye ready — Signal AI Detection active!','green'),800);
+    </script>
+</body>
+</html>
